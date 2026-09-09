@@ -1,0 +1,69 @@
+# ============================================================
+# CamVid Segmentation – Configuration File
+# ============================================================
+
+# ─── DATA ────────────────────────────────────────────────────
+data:
+  root: "/path/to/your/camvid"          # CHANGE THIS
+  img_dir: "701_StillsRaw_full"
+  mask_dir: "LabeledApproved_full"
+  train_size: [360, 480]                # (H, W)
+  ignore_index: 255
+  void_color: [0, 0, 0]
+
+# ─── SPLIT ──────────────────────────────────────────────────
+split:
+  train_ratio: 0.70
+  val_ratio:   0.15
+  test_ratio:  0.15
+  seed: 0
+
+# ─── TRAINING ───────────────────────────────────────────────
+training:
+  epochs: 10
+  batch_size: 2                         # 1 if CPU
+  num_workers: 4                        # 0 if CPU
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-4
+  clip_grad_norm: 1.0
+  alpha_ce_dice: 0.5                    # CE weight in CombinedLoss
+  scheduler:
+    type: "cosine"
+    T_max: 10
+    eta_min: 1.0e-6
+  save_dir: "outputs/models/"
+
+# ─── MODELS (only 4) ────────────────────────────────────────
+models:
+  UNet:
+    enabled: true
+    params: {}
+
+  SegNet:
+    enabled: true
+    params: {}
+
+  VMambaUNet:
+    enabled: true
+    params:
+      C: 64
+      n_vss_enc: 2
+      n_vss_bot: 2
+      n_vss_dec: 2
+      expansion: 2
+      kernel_size: 31
+      dropout: 0.0
+
+  FCN:
+    enabled: true
+    params:
+      pretrained: true
+
+# ─── TRAFFIC OCCUPANCY ──────────────────────────────────────
+occupancy:
+  vehicle_classes: [2, 5, 7, 13, 14, 16, 22, 25, 27]
+
+# ─── EVALUATION ─────────────────────────────────────────────
+evaluation:
+  save_figures: true
+  figures_dir: "outputs/figures/"
