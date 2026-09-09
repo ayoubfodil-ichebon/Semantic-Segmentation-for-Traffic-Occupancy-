@@ -1,0 +1,115 @@
+"""
+CamVid dataset loader, RGB↔ID mappings, and augmentations.
+"""
+import os
+import random
+import numpy as np
+from PIL import Image
+import torch
+from torch.utils.data import Dataset
+from torchvision.transforms.functional import resize
+
+# ─── CamVid 32 classes ───────────────────────────────────────
+CLASSES = [
+    ("Animal",            (64, 128,  64)),
+    ("Archway",           (192,   0, 128)),
+    ("Bicyclist",         (  0, 128, 192)),
+    ("Bridge",            (  0, 128,  64)),
+    ("Building",          (128,   0,   0)),
+    ("Car",               ( 64,   0, 128)),
+    ("CartLuggagePram",   ( 64,   0, 192)),
+    ("Child",             (192, 128,  64)),
+    ("Column_Pole",       (192, 192, 128)),
+    ("Fence",             ( 64,  64, 128)),
+    ("LaneMkgsDriv",      (128,   0, 192)),
+    ("LaneMkgsNonDriv",   (192,   0,  64)),
+    ("Misc_Text",         (128, 128,  64)),
+    ("MotorcycleScooter", (192,   0, 192)),
+    ("OtherMoving",       (128,  64,  64)),
+    ("ParkingBlock",      ( 64, 192, 128)),
+    ("Pedestrian",        ( 64,  64,   0)),
+    ("Road",              (128,  64, 128)),
+    ("RoadShoulder",      (128, 128, 192)),
+    ("Sidewalk",          (  0,   0, 192)),
+    ("SignSymbol",        (192, 128, 128)),
+    ("Sky",               (128, 128, 128)),
+    ("SUVPickupTruck",    ( 64, 128, 192)),
+    ("TrafficCone",       (  0,   0,  64)),
+    ("TrafficLight",      (  0,  64,  64)),
+    ("Train",             (192,  64, 128)),
+    ("Tree",              (128, 128,   0)),
+    ("Truck_Bus",         (192, 128, 192)),
+    ("Tunnel",            ( 64,   0,  64)),
+    ("VegetationMisc",    (192, 192,   0)),
+    ("Wall",              ( 64, 192,   0)),
+]
+
+NUM_CLASSES = len(CLASSES)
+IGNORE_INDEX = 255
+VOID_COLOR = (0, 0, 0)
+
+COLOR2ID = {rgb: i for i, (_, rgb) in enumerate(CLASSES)}
+ID2NAME  = {i: name for i, (name, _) in enumerate(CLASSES)}
+ID2COLOR = {i: rgb  for i, (_, rgb) in enumerate(CLASSES)}
+
+# ─── Helpers ────────────────────────────────────────────────
+def img_base(name):
+    return os.path.splitext(name)[0]
+
+def mask_base(name):
+    n = os.path.splitext(name)[0]
+    return n[:-2] if n.endswith("_L") else n
+
+# ─── Augmentations ──────────────────────────────────────────
+def augment_pair(img_np, msk_np):
+    """Random horizontal flip + brightness jitter."""
+    if random.random() < 0.5:
+        img_np = np.ascontiguousarray(img_np[:, ::-1, :])
+        msk_np = np.ascontiguousarray(msk_np[:, ::-1])
+    if random.random() < 0.4:
+        factor = random.uniform(0.75, 1.25)
+        img_np = np.clip(img_np.astype(np.float32) * factor, 0, 255).astype(np.uint8)
+    return img_np, msk_np
+
+# ─── Dataset ─────────────────────────────────────────────────
+class CamVidPairsDataset(Dataset):
+    def __init__(self, img_dir, mask_dir, pairs, size=(360, 480), augment=False):
+        self.img_dir = img_dir
+        self.mask_dir = mask_dir
+        self.pairs = pairs
+        self.size = size
+        self.augment = augment
+
+    def __len__(self):
+        return len(self.pairs)
+
+    def __getitem__(self, idx):
+        img_name, mask_name = self.pairs[idx]
+        img = Image.open(os.path.join(self.img_dir, img_name)).convert("RGB")
+        msk = Image.open(os.path.join(self.mask_dir, mask_name)).convert("RGB")
+
+        # Resize
+        interp_img = Image.Resampling.BILINEAR if hasattr(Image, 'Resampling') else Image.BILINEAR
+        interp_msk = Image.Resampling.NEAREST if hasattr(Image, 'Resampling') else Image.NEAREST
+        img = resize(img, self.size, interpolation=interp_img)
+        msk = resize(msk, self.size, interpolation=interp_msk)
+
+        img_np = np.array(img)
+        msk_np = np.array(msk)
+
+        if self.augment:
+            img_np, msk_np = augment_pair(img_np, msk_np)
+
+        img_t = torch.from_numpy(img_np).permute(2, 0, 1).float() / 255.0
+
+        # Convert RGB mask to class IDs
+        h, w, _ = msk_np.shape
+        mask_ids = np.full((h, w), IGNORE_INDEX, dtype=np.uint8)
+        for (r, g, b), cls_id in COLOR2ID.items():
+            match = (msk_np[:, :, 0] == r) & (msk_np[:, :, 1] == g) & (msk_np[:, :, 2] == b)
+            mask_ids[match] = cls_id
+        vr, vg, vb = VOID_COLOR
+        void = (msk_np[:, :, 0] == vr) & (msk_np[:, :, 1] == vg) & (msk_np[:, :, 2] == vb)
+        mask_ids[void] = IGNORE_INDEX
+
+        return img_t, torch.from_numpy(mask_ids).long()
