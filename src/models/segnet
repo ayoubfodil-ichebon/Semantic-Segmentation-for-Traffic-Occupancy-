@@ -1,0 +1,76 @@
+"""
+SegNet – VGG-style encoder/decoder with max-pool indices.
+"""
+import torch
+import torch.nn as nn
+
+class SegNetBlock(nn.Module):
+    def __init__(self, in_ch, out_ch, n_convs=2):
+        super().__init__()
+        layers = []
+        for i in range(n_convs):
+            layers += [
+                nn.Conv2d(in_ch if i == 0 else out_ch, out_ch, 3, padding=1),
+                nn.BatchNorm2d(out_ch),
+                nn.ReLU(inplace=True),
+            ]
+        self.convs = nn.Sequential(*layers)
+        self.pool = nn.MaxPool2d(2, stride=2, return_indices=True)
+
+    def forward(self, x):
+        x = self.convs(x)
+        x, idx = self.pool(x)
+        return x, idx
+
+class SegNetDecBlock(nn.Module):
+    def __init__(self, in_ch, out_ch, n_convs=2):
+        super().__init__()
+        self.unpool = nn.MaxUnpool2d(2, stride=2)
+        layers = []
+        for i in range(n_convs):
+            layers += [
+                nn.Conv2d(in_ch if i == 0 else out_ch, out_ch, 3, padding=1),
+                nn.BatchNorm2d(out_ch),
+                nn.ReLU(inplace=True),
+            ]
+        self.convs = nn.Sequential(*layers)
+
+    def forward(self, x, idx, output_size):
+        x = self.unpool(x, idx, output_size=output_size)
+        return self.convs(x)
+
+class SegNet(nn.Module):
+    def __init__(self, n_classes):
+        super().__init__()
+        self.enc1 = SegNetBlock(3, 64, n_convs=2)
+        self.enc2 = SegNetBlock(64, 128, n_convs=2)
+        self.enc3 = SegNetBlock(128, 256, n_convs=3)
+        self.enc4 = SegNetBlock(256, 512, n_convs=3)
+        self.enc5 = SegNetBlock(512, 512, n_convs=3)
+
+        self.dec5 = SegNetDecBlock(512, 512, n_convs=3)
+        self.dec4 = SegNetDecBlock(512, 256, n_convs=3)
+        self.dec3 = SegNetDecBlock(256, 128, n_convs=3)
+        self.dec2 = SegNetDecBlock(128, 64, n_convs=2)
+        self.dec1 = SegNetDecBlock(64, 64, n_convs=2)
+
+        self.out = nn.Conv2d(64, n_classes, kernel_size=1)
+
+    def forward(self, x):
+        s1 = x.shape
+        x, i1 = self.enc1(x)
+        s2 = x.shape
+        x, i2 = self.enc2(x)
+        s3 = x.shape
+        x, i3 = self.enc3(x)
+        s4 = x.shape
+        x, i4 = self.enc4(x)
+        s5 = x.shape
+        x, i5 = self.enc5(x)
+
+        x = self.dec5(x, i5, output_size=s5)
+        x = self.dec4(x, i4, output_size=s4)
+        x = self.dec3(x, i3, output_size=s3)
+        x = self.dec2(x, i2, output_size=s2)
+        x = self.dec1(x, i1, output_size=s1)
+        return self.out(x)
